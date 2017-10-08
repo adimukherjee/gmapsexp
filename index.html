@@ -1,0 +1,25 @@
+<html>
+
+<body>
+    <div id="map" style="float:left;width:70%; height:100%"></div>
+    <div id="directionsPanel" style="float:right;width:30%;height: 100%"></div>
+
+    <script>
+        function initMap() {
+            var map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 11,
+                center: { lat: 51.5074, lng: 0.1278 }
+            });
+
+            var ctaLayer = new google.maps.KmlLayer({
+                url: 'http://googlemaps.github.io/js-v2-samples/ggeoxml/cta.kml',
+                map: map
+            });
+        }
+    </script>
+
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDrOWCUEcVe4Z7ObB7jr8E0kWAaBfSqKUk&callback=initMap"
+        type="text/javascript"></script>
+</body>
+
+</html>
