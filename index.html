@@ -94,6 +94,7 @@
         var directionsService;
         var renderers = [];
         var cur = 0;
+        var total = 0;
 
         function initMap() {
             map = new google.maps.Map(document.getElementById('map'), {
@@ -103,29 +104,32 @@
             directionsService = new google.maps.DirectionsService;
         }
 
-        function requestRoutes(locs) {
-            for (var i = 0; i < locs.length; i++) {
-                setTimeout(function () {
-                    var request = {
-                        origin: locs[i].coord,
-                        destination: 'SW1V 3JL',
-                        travelMode: google.maps.DirectionsTravelMode.TRANSIT,
-                        // Returns multiple routes
-                        provideRouteAlternatives: false
-                    };
-                    rr = _.partial(renderRoute, locs[i].name)
-                    directionsService.route(request, rr);
-                }, 500);
-            }
+        function createAndSendRequest(loc) {
+            var request = {
+                origin: loc.coord,
+                destination: 'SW1V 3JL',
+                travelMode: google.maps.DirectionsTravelMode.TRANSIT,
+                // Returns multiple routes
+                provideRouteAlternatives: false
+            };
+            rr = _.partial(renderRoute, loc.name)
+            directionsService.route(request, rr);
         }
 
+        function requestRoutes(locs) {
+            total = locs.length;
+            for (var i = 0; i < total; i++) {
+                var loc = locs[i]
+                _.delay(createAndSendRequest, i * 500, loc);
+            }
+        }
 
         function renderRoute(name, response, status) {
             if (status == google.maps.DirectionsStatus.OK) {
                 renderers[cur] = new google.maps.DirectionsRenderer;
                 renderers[cur].setMap(map);
                 renderers[cur].setDirections(response);
-                cur++
+                cur++;
                 var leg = response.routes[0].legs[0]
                 var arrival_time = moment(leg.arrival_time.value)
                 var departure_time = moment(leg.departure_time.value)
@@ -145,6 +149,9 @@
                                 </ul>
                             </div>`
                 $('#right-panel').append(html)
+                if (cur == total) {
+                    window.alert("Done!")
+                }
             } else {
                 console.log(response);
                 $('#right-panel').append(`<div></div>`);
@@ -156,30 +163,45 @@
             console.log(files);
         }
 
+        var onChangeHandler = function (name) {
+            for (var r of renderers) {
+                r.setMap(null);
+            }
+            $.ajax({
+                type: "GET",
+                url: `https://raw.githubusercontent.com/adstastic/gmapsexp/master/${name}.kml`,
+                cache: false,
+                dataType: "xml",
+                success: function (xml) {
+                    var obj = parse(xml);
+                    var locs = _.map(obj.Document.Folder.Placemark, (p) => {
+                        return {
+                            'coord': _.zipObject(['lat', 'lng'], p.Point.split(",").slice(0, 2).map(parseFloat).reverse()),
+                            'name': p.name
+                        }
+                    })
+                    requestRoutes(locs);
+                }
+            })
+        };
+
+
+
         $(document).ready(function () {
-            var onChangeHandler = function (name) {
-                $.ajax({
-                    type: "GET",
-                    url: `https://raw.githubusercontent.com/adstastic/gmapsexp/master/${name}.kml`,
-                    cache: false,
-                    dataType: "xml",
-                    success: function (xml) {
-                        var obj = parse(xml);
-                        var locs = _.map(obj.Document.Folder.Placemark, (p) => {
-                            return {
-                                'coord': _.zipObject(['lat', 'lng'], p.Point.split(",").slice(0, 2).map(parseFloat).reverse()),
-                                'name': p.name
-                            }
-                        })
-                        requestRoutes(locs);
-                    }
-                })
-            };
+            $('#deaneries').on({
+                "focus": function () {
+                    console.log('clicked!', this, this.value);
+                    this.selectedIndex = -1;
+                },
+                "change": function () {
+                    choice = $(this).val();
+                    this.blur();
+                    onChangeHandler(choice);
+                }
+            });
 
             onChangeHandler("");
-
-
-        })
+        });
     </script>
     <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDrOWCUEcVe4Z7ObB7jr8E0kWAaBfSqKUk&callback=initMap"
         type="text/javascript"></script>
@@ -198,10 +220,9 @@
     <div>
         <div id="right-panel">
             <!-- <input type="file" id="input" onchange="handleFiles(this.files)"> -->
-            <select id="deaneries" name="select"> <!--Supplement an id here instead of using 'name'-->
+            <select id="deaneries" name="select"> 
                 <option value="EBH">EBH</option> 
-                <option value="value2" selected>Value 2</option>
-                <option value="value3">Value 3</option>
+                <option value="South-Thames" selected>South Thames</option>
               </select>
         </div>
     </div>
