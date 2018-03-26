@@ -84,17 +84,18 @@
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js" type="text/javascript"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.min.js" type="text/javascript"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.18.1/moment.min.js" type="text/javascript"></script>
-    <script src="parse.js" type="text/javascript"></script>
 
     <script>
         var directionsService;
         var LDN = { 'lat': 51.48824, 'lng': 0.12944 }
         var map;
-        var directionsService;
         var renderers = [];
         var cur = 0;
         var total = 0;
+        var origin = "";
+        var destinations = [];
+        var directions = []
+        var reverse = false;
 
         function initMap() {
             map = new google.maps.Map(document.getElementById('map'), {
@@ -104,53 +105,57 @@
             directionsService = new google.maps.DirectionsService;
         }
 
-        function createAndSendRequest(loc) {
+        function createAndSendRequest(origin, destination) {
             var request = {
-                origin: loc.coord,
-                destination: 'SW1V 3JL',
+                origin: origin.location,
+                destination: destination.location,
                 travelMode: google.maps.DirectionsTravelMode.TRANSIT,
                 // Returns multiple routes
                 provideRouteAlternatives: false
             };
-            rr = _.partial(renderRoute, loc.name)
-            directionsService.route(request, rr);
+            var _renderRoute = _.partial(renderRoute, {"origin": origin, "destination": destination});
+            directionsService.route(request, _renderRoute);
         }
 
-        function requestRoutes(locs) {
-            total = locs.length;
+        function requestRoutes(pairs) {
+            total = pairs.length;
             for (var i = 0; i < total; i++) {
-                var loc = locs[i]
-                _.delay(createAndSendRequest, i * 500, loc);
+                var pair = pairs[i]
+                var origin = pair[0]
+                var destination = pair[1]
+                _.delay(createAndSendRequest, i * 500, origin, destination);
             }
         }
 
-        function renderRoute(name, response, status) {
+        function renderRoute(names, response, status) {
             if (status == google.maps.DirectionsStatus.OK) {
                 renderers[cur] = new google.maps.DirectionsRenderer;
                 renderers[cur].setMap(map);
                 renderers[cur].setDirections(response);
                 cur++;
                 var leg = response.routes[0].legs[0]
-                var arrival_time = moment(leg.arrival_time.value)
-                var departure_time = moment(leg.departure_time.value)
-                var travel_time = arrival_time.diff(departure_time, 'minutes')
+                var travel_time = leg.duration
                 var start_address = leg.start_address;
+                var end_address = leg.end_address;
                 var summary = _.map(leg.steps, function (step) {
                     var tmp = _.pick(step, ['duration.text', 'travel_mode', 'instructions', 'start_address'])
                     tmp.duration = tmp.duration.text;
                     return `<li>${tmp.instructions}: ${tmp.duration}</li>`
                 });
-                var html = `<div>
-                                <p>${name}</p> 
-                                <p>${start_address}</p>
-                                <p>${travel_time} mins</p>
-                                <ul>
-                                    ${summary.join("")}
-                                </ul>
-                            </div>`
-                $('#right-panel').append(html)
-                if (cur == total) {
-                    window.alert("Done!")
+                var numSteps = leg.steps.length;
+                directions.push({
+                    "origin": names.origin.location,
+                    "destination": names.destination.location,
+                    "start_address": start_address,
+                    "end_address": end_address,
+                    "travel_time_str": travel_time.text,
+                    "travel_time_secs": travel_time.value,
+                    "step_count": numSteps, 
+                    "summary": summary.join("")
+                });
+                if (cur == total) { 
+                    displayDirections($("#orderByKey").val(), $("#orderByOrder").val());
+                    hideLoadingIndicator();
                 }
             } else {
                 console.log(response);
@@ -158,82 +163,151 @@
             }
         }
 
-
-        var handleFiles = function (files) {
+        var handleFiles = function(files) {
             console.log(files);
         }
 
-        var onChangeHandler = function (name) {
+        var onChangeHandler = function(origin, destinations) {
+            resetPanel();
+            resetRenderers();
+            resetResults();
+            var pairs = destinations.map((destination) => {
+                if (reverse) {
+                    return [destination, origin]
+                } else {
+                    return [origin, destination]
+                }
+            })
+            console.log(pairs);
+            showLoadingIndicator();
+            requestRoutes(pairs);
+        }
+
+        var displayDirections = function(orderByKey, orderByOrder) {
+            resetPanel();
+            var html = _.chain(directions)
+                        .orderBy([orderByKey], [orderByOrder])
+                        .map(d => {
+                            return `<hr>
+                                    <div>
+                                        <p>Origin ("${d.origin}"): ${d.start_address}</p>
+                                        <p>Destination ("${d.destination}"): ${d.end_address}</p>
+                                        <p>${d.travel_time_str}, ${d.step_count} steps</p>
+                                        <ul>
+                                            ${d.summary}
+                                        </ul>
+                                    </div>
+                                    `
+                        })
+                        .join("")
+                        .value();
+            $('#directions').append(html)
+        }
+        
+        var resetPanel = function() {
+            $('#directions').html("")
+        }
+        
+        var resetRenderers = function() {
             for (var r of renderers) {
                 r.setMap(null);
             }
-            $.ajax({
-                type: "GET",
-                url: `https://raw.githubusercontent.com/adstastic/gmapsexp/master/${name}.kml`,
-                cache: false,
-                dataType: "xml",
-                success: function (xml) {
-                    var obj = parse(xml);
-                    var locs = _.map(obj.Document.Folder.Placemark, (p) => {
-                        return {
-                            'coord': _.zipObject(['lat', 'lng'], p.Point.split(",").slice(0, 2).map(parseFloat).reverse()),
-                            'name': p.name
-                        }
-                    })
-                    requestRoutes(locs);
-                }
-            })
-        };
+        }
 
+        var resetResults = function() {
+            directions = [];
+            cur = 0;
+        }
 
+        var makeLocationObject = function(locationStr) {
+            return {"location": locationStr}
+        }
+
+        var queryFieldsPopulated = function() {
+            return _origin != "" || _destinations != ""              
+        }
+
+        var showLoadingIndicator = function() {
+            $('#btn-submit').html("Loading...")
+        }
+
+        var hideLoadingIndicator = function() {
+            $('#btn-submit').html("Submit")
+        }
 
         $(document).ready(function () {
-            $('#deaneries').on({
-                "focus": function () {
-                    console.log('clicked!', this, this.value);
-                    this.selectedIndex = -1;
-                },
-                "change": function () {
-                    choice = $(this).val();
-                    this.blur();
-                    onChangeHandler(choice);
+            $('#btn-submit').on({
+                "click": function () {
+                    var _origin = $("#origin").val();
+                    var _destinations = $("#destinations").val();
+                    if (_origin == "" || _destinations == "") {
+                        alert("Please enter an origin and at least one destination!")
+                    } else {
+                        origin = _origin
+                        this.blur()
+                        origin = makeLocationObject(_origin);
+                        destinations = _.chain(_destinations.split("\n"))
+                                        .remove((e) => {
+                                            return e.length > 0;
+                                        })
+                                        .map((e) => {
+                                            return makeLocationObject(e);
+                                        })
+                                        .value();
+                        onChangeHandler(origin, destinations);
+                    }
                 }
             });
-
-            onChangeHandler("");
+            $('#btn-reverse').on({
+                "click": function () {
+                    if (origin == "" || destinations == []) {
+                        alert("Please submit a search!")
+                    } else {
+                        directions = []
+                        reverse = !reverse
+                        onChangeHandler(origin, destinations);
+                    }
+                }
+            });
+            $('#orderByKey').on({
+                "change": function () {
+                    displayDirections($("#orderByKey").val(), $("#orderByOrder").val());
+                }
+            });
+            $('#orderByOrder').on({
+                "change": function () {
+                    displayDirections($("#orderByKey").val(), $("#orderByOrder").val());
+                }
+            });
         });
+
     </script>
     <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDrOWCUEcVe4Z7ObB7jr8E0kWAaBfSqKUk&callback=initMap"
         type="text/javascript"></script>
 </head>
 
 <body>
-    <div id="floating-panel">
-        <strong>Mode:</strong>
-        <select id="mode">
-                    <option value="TRANSIT">Public Transport</option>
-                    <option value="DRIVING">Driving</option>
-        </select>
-        <strong>Destination</strong>
-        <input id="destination" type="text"></input>
-    </div>
     <div>
         <div id="right-panel">
-            <!-- <input type="file" id="input" onchange="handleFiles(this.files)"> -->
-            <select id="deaneries" name="select"> 
-                <option value="" disabled selected>Please select an option</option>
-                <option value="ebh">EBH</option> 
-                <option value="north-east-thames">North East Thames</option> 
-                <option value="north-central-thames">North Central Thames</option> 
-                <option value="north-west-thames">North West Thames</option> 
-                <option value="south-thames">South Thames</option>
-              </select>
+            <div id="query">
+                <input id="origin" placeholder="Origin"></input>
+                <textarea id="destinations" placeholder="Destinations (one per line)"></textarea>
+            </div>
+            <select id="orderByKey" name="Sort Results By...">
+                <option value="travel_time_secs" selected>Travel Time</option>
+                <option value="step_count" selected>Number of Steps</option>
+            </select>
+            <select id="orderByOrder" name="Order Results By...">
+                <option value="asc" selected>Ascending</option>
+                <option value="desc">Descending</option>
+            </select>
+            <button type='button' id='btn-submit'>Submit</button>
+            <button type='button' id='btn-reverse'>Reverse</button>
+            <div id="directions"></div>
         </div>
     </div>
 
     <div id="map"></div>
-
-
 
 
 </body>
